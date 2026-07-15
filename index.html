@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#03090c">
+  <title>JARVIS // 身份验证</title>
+  <style>
+    :root{--cyan:#48f6e9;--green:#66ff9a;--red:#ff5b6e;--ink:#03090c;--muted:#89a5a7}
+    *{box-sizing:border-box} html,body{height:100%;margin:0} body{overflow:hidden;background:var(--ink);color:#eaffff;font-family:Consolas,"Microsoft YaHei",monospace}
+    #matrix,.scanlines{position:fixed;inset:0;width:100%;height:100%}.scanlines{pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.1) 0,rgba(0,0,0,.1) 1px,transparent 1px,transparent 4px);opacity:.55}
+    .statusbar{position:fixed;top:22px;left:28px;right:28px;display:flex;justify-content:space-between;color:var(--green);font-size:11px;letter-spacing:0;opacity:.8}
+    main{position:relative;z-index:1;min-height:100%;display:grid;place-items:center;padding:70px 20px 30px}
+    .panel{position:relative;width:min(420px,100%);padding:42px 36px 34px;border:1px solid rgba(72,246,233,.45);background:rgba(1,12,15,.55);backdrop-filter:blur(13px);box-shadow:0 0 0 1px rgba(72,246,233,.08) inset,0 24px 80px rgba(0,0,0,.6),0 0 35px rgba(72,246,233,.1)}
+    .panel:before,.panel:after{content:"";position:absolute;width:34px;height:34px;border-color:var(--cyan)}.panel:before{left:-2px;top:-2px;border-left:2px solid;border-top:2px solid}.panel:after{right:-2px;bottom:-2px;border-right:2px solid;border-bottom:2px solid}
+    .eyebrow{color:var(--cyan);font-size:11px;letter-spacing:0;margin-bottom:12px}.eyebrow:before{content:"●";margin-right:8px;animation:blink 1.2s infinite}
+    h1{margin:0;font:600 30px/1.1 Arial,"Microsoft YaHei",sans-serif;letter-spacing:0}.subtitle{margin:10px 0 30px;color:var(--muted);font-size:12px}
+    label{display:block;margin:18px 0 7px;color:#a8c6c7;font-size:11px}.field{position:relative}.field span{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--cyan)}
+    input{width:100%;height:48px;padding:0 14px 0 38px;border:1px solid rgba(137,165,167,.35);border-radius:2px;outline:0;background:rgba(0,8,10,.58);color:white;font:14px Consolas,"Microsoft YaHei",monospace;transition:.2s} input:focus{border-color:var(--cyan);box-shadow:0 0 18px rgba(72,246,233,.12)} input:disabled{opacity:.4}
+    button{width:100%;height:48px;margin-top:26px;border:1px solid var(--cyan);border-radius:2px;background:rgba(72,246,233,.08);color:var(--cyan);font:600 13px Consolas,"Microsoft YaHei",monospace;cursor:pointer;transition:.2s}button:hover:not(:disabled){background:var(--cyan);color:#021012;box-shadow:0 0 28px rgba(72,246,233,.35)}button:disabled{cursor:not-allowed;opacity:.45}
+    #msg{min-height:20px;margin-top:16px;text-align:center;color:var(--muted);font-size:12px}.error{color:var(--red)!important}.success{color:var(--green)!important}
+    .foot{margin-top:24px;padding-top:18px;border-top:1px solid rgba(137,165,167,.16);display:flex;justify-content:space-between;color:#587174;font-size:9px}
+    @keyframes blink{50%{opacity:.15}} @media(max-width:520px){.statusbar{left:16px;right:16px}.statusbar span:last-child{display:none}.panel{padding:35px 24px 28px}}
+  </style>
+</head>
+<body>
+  <canvas id="matrix" aria-hidden="true"></canvas><div class="scanlines"></div>
+  <div class="statusbar"><span>SECURE CHANNEL / TLS</span><span id="clock"></span></div>
+  <main><form class="panel" id="loginForm" autocomplete="on">
+    <div class="eyebrow">JARVIS SECURITY GATEWAY</div><h1>身份验证</h1><p class="subtitle">请输入授权凭据以建立安全会话</p>
+    <label for="username">用户标识</label><div class="field"><span>&gt;</span><input id="username" name="username" autocomplete="username" placeholder="USERNAME" required></div>
+    <label for="password">访问密钥</label><div class="field"><span>#</span><input id="password" name="password" type="password" autocomplete="current-password" placeholder="PASSWORD" required></div>
+    <button id="submit" type="submit">[ 建立连接 ]</button><div id="msg" role="status" aria-live="polite"></div>
+    <div class="foot"><span>NODE: KURBANJ-01</span><span>ENCRYPTION: ACTIVE</span></div>
+  </form></main>
+  <script>
+    const API = '/api/login'; 
+    const ATTEMPTS_KEY='jarvis_failed_attempts', LOCK_KEY='jarvis_lock_until', MAX_ATTEMPTS=3, LOCK_MS=5*60*1000;
+    const form=document.getElementById('loginForm'), submit=document.getElementById('submit'), msg=document.getElementById('msg');
+    const fields=[document.getElementById('username'),document.getElementById('password')];
+    function setMessage(text,type=''){msg.textContent=text;msg.className=type}
+    function remaining(){return Math.max(0,Number(localStorage.getItem(LOCK_KEY)||0)-Date.now())}
+    function refreshLock(){const ms=remaining(),locked=ms>0;fields.forEach(x=>x.disabled=locked);submit.disabled=locked;if(locked){const m=Math.floor(ms/60000),s=Math.ceil(ms%60000/1000);setMessage(`访问已锁定，请在 ${m}:${String(s).padStart(2,'0')} 后重试`,'error')}else if(localStorage.getItem(LOCK_KEY)){localStorage.removeItem(LOCK_KEY);localStorage.setItem(ATTEMPTS_KEY,'0');setMessage('锁定已解除，可以重新登录。')}}
+    setInterval(refreshLock,1000);refreshLock();
+    form.addEventListener('submit',async e=>{e.preventDefault();if(remaining())return;submit.disabled=true;setMessage('正在验证加密凭据...');
+      try{const res=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:fields[0].value.trim(),password:fields[1].value})});const data=await res.json();
+        if(res.ok&&data.success){localStorage.removeItem(ATTEMPTS_KEY);localStorage.removeItem(LOCK_KEY);sessionStorage.setItem('jarvis_session','active');setMessage('验证通过，正在初始化系统...','success');setTimeout(()=>location.href='home.html',700);return}
+        const count=Number(localStorage.getItem(ATTEMPTS_KEY)||0)+1;localStorage.setItem(ATTEMPTS_KEY,String(count));if(count>=MAX_ATTEMPTS){localStorage.setItem(LOCK_KEY,String(Date.now()+LOCK_MS));refreshLock()}else setMessage(`凭据无效，还可尝试 ${MAX_ATTEMPTS-count} 次`,'error');
+      }catch(err){setMessage('无法连接验证节点，请稍后重试。','error')}finally{if(!remaining())submit.disabled=false}});
+    const c=document.getElementById('matrix'),ctx=c.getContext('2d');let columns,drops;function resize(){c.width=innerWidth;c.height=innerHeight;columns=Math.ceil(c.width/18);drops=Array(columns).fill(1)}resize();addEventListener('resize',resize);
+    function rain(){ctx.fillStyle='rgba(3,9,12,.075)';ctx.fillRect(0,0,c.width,c.height);ctx.fillStyle='#28d9a0';ctx.font='13px Consolas';drops.forEach((y,i)=>{ctx.globalAlpha=.18+Math.random()*.36;ctx.fillText(String.fromCharCode(0x30A0+Math.random()*96),i*18,y*18);if(y*18>c.height&&Math.random()>.976)drops[i]=0;drops[i]++});requestAnimationFrame(rain)}rain();
+    function tick(){document.getElementById('clock').textContent=new Date().toLocaleString('zh-CN',{hour12:false})}tick();setInterval(tick,1000);
+  </script>
+</body></html>
