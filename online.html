@@ -149,6 +149,17 @@
             box-shadow: 0 0 15px rgba(0,180,216,0.15);
         }
         .chat-input::placeholder { color: var(--muted); }
+        .model-select {
+            background: rgba(0,180,216,0.05);
+            border: 1px solid var(--border);
+            color: var(--fg-bright);
+            outline: none;
+            min-width: 210px;
+        }
+        .model-select option {
+            background: #08101e;
+            color: var(--fg-bright);
+        }
         .send-btn {
             background: linear-gradient(135deg, var(--accent), #0088aa);
             color: var(--bg);
@@ -319,6 +330,15 @@
                 </div>
                 <div id="chat-messages" class="flex-1 overflow-y-auto px-5 py-4 space-y-4"></div>
                 <div class="px-4 py-3 border-t border-[rgba(0,180,216,0.08)] flex-shrink-0" style="background: rgba(6,10,19,0.5);">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="font-display text-[9px] tracking-[0.16em] text-[var(--accent)]">AGNES MODEL</span>
+                        <select id="model-select" class="model-select px-3 py-2 rounded-md text-xs font-['Rajdhani']">
+                            <option value="agnes-2.0-flash" data-kind="chat">agnes-2.0-flash / Chat</option>
+                            <option value="agnes-image-2.1-flash" data-kind="image">agnes-image-2.1-flash / Image</option>
+                            <option value="agnes-image-2.0-flash" data-kind="image">agnes-image-2.0-flash / Image</option>
+                            <option value="agnes-video-v2.0" data-kind="video">agnes-video-v2.0 / Video</option>
+                        </select>
+                    </div>
                     <div class="flex gap-2">
                         <input id="chat-input" type="text" class="chat-input flex-1 px-4 py-2.5 rounded-lg text-sm font-['Rajdhani']" placeholder="输入指令或问题..." autocomplete="off">
                         <button id="send-btn" class="send-btn px-5 py-2.5 rounded-lg font-display text-[10px] tracking-wider font-semibold">SEND</button>
@@ -647,6 +667,7 @@
         const chatMessages = document.getElementById('chat-messages');
         const chatInput = document.getElementById('chat-input');
         const sendBtn = document.getElementById('send-btn');
+        const modelSelect = document.getElementById('model-select');
 
         // 转义HTML
         function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
@@ -697,6 +718,120 @@
             })();
         }
 
+        const AGNES_API = '/api/agnes';
+        const chatHistory = [
+            { role: 'system', content: '你是 J.A.R.V.I.S，一个简洁、可靠、中文优先的 AI 助手。' }
+        ];
+
+        function modelKind() {
+            return modelSelect.selectedOptions[0]?.dataset.kind || 'chat';
+        }
+
+        function setBusy(busy) {
+            sendBtn.disabled = busy;
+            chatInput.disabled = busy;
+            modelSelect.disabled = busy;
+            sendBtn.textContent = busy ? 'WAIT' : 'SEND';
+        }
+
+        function addAssetMsg(kind, src, caption) {
+            const div = document.createElement('div');
+            const now = new Date();
+            const ts = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+            const safeSrc = esc(src);
+            const media = kind === 'video'
+                ? `<video src="${safeSrc}" controls class="mt-2 rounded-lg border border-[var(--border)] max-w-full"></video>`
+                : `<img src="${safeSrc}" alt="Agnes generated image" class="mt-2 rounded-lg border border-[var(--border)] max-w-full">`;
+            div.className = 'flex justify-start';
+            div.innerHTML = `<div class="flex gap-2.5" style="max-width:85%"><div class="w-7 h-7 rounded-full border border-[var(--accent)] flex items-center justify-center flex-shrink-0 mt-0.5"><i class="fas fa-robot text-[10px] text-[var(--accent)]"></i></div><div><span class="text-[9px] text-[var(--accent)] font-display tracking-wider mb-1 block">AGNES</span><div class="msg-jarvis px-4 py-3"><p class="text-sm text-[var(--fg)] leading-relaxed whitespace-pre-line">${esc(caption)}</p>${media}<p class="text-[10px] text-[var(--muted)] mt-1">${ts}</p></div></div></div>`;
+            chatMessages.appendChild(div);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function firstMediaUrl(data) {
+            const item = data?.data?.[0] || data?.result || data;
+            return item?.url || item?.video_url || item?.image_url || item?.output_url ||
+                (item?.b64_json ? `data:image/png;base64,${item.b64_json}` : '');
+        }
+
+        async function agnesRequest(path, body) {
+            const res = await fetch(`${AGNES_API}/${path}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || data.message || `Agnes request failed: ${res.status}`);
+            return data;
+        }
+
+        async function loadAgnesModels() {
+            try {
+                const res = await fetch(`${AGNES_API}/models`);
+                const data = await res.json();
+                const models = Array.isArray(data.data) ? data.data : [];
+                if (!models.length) return;
+                const current = modelSelect.value;
+                modelSelect.innerHTML = models.map(m => {
+                    const id = typeof m === 'string' ? m : m.id;
+                    if (!id) return '';
+                    const kind = id.includes('video') ? 'video' : (id.includes('image') ? 'image' : 'chat');
+                    return `<option value="${esc(id)}" data-kind="${kind}">${esc(id)} / ${kind.toUpperCase()}</option>`;
+                }).join('');
+                if ([...modelSelect.options].some(o => o.value === current)) modelSelect.value = current;
+            } catch (err) {
+                typeMsg('Agnes 模型列表暂时无法读取，已使用内置模型列表。');
+            }
+        }
+
+        async function sendToAgnes(text) {
+            const model = modelSelect.value;
+            const kind = modelKind();
+            if (kind === 'image') {
+                typeMsg('正在调用 Agnes 图片模型生成图像...');
+                const data = await agnesRequest('images', { model, prompt: text, n: 1, size: '1024x1024' });
+                const url = firstMediaUrl(data);
+                if (!url) throw new Error('Agnes 图片接口没有返回可显示的图片地址。');
+                addAssetMsg('image', url, `图片生成完成：${model}`);
+                return;
+            }
+            if (kind === 'video') {
+                typeMsg('正在提交 Agnes 视频生成任务，生成可能需要一些时间...');
+                const created = await agnesRequest('videos', { model, prompt: text });
+                const id = created?.id || created?.video_id || created?.data?.id || created?.task_id;
+                if (!id) {
+                    const url = firstMediaUrl(created);
+                    if (url) addAssetMsg('video', url, `视频生成完成：${model}`);
+                    else throw new Error('Agnes 视频接口没有返回任务 ID 或视频地址。');
+                    return;
+                }
+                for (let i = 0; i < 18; i++) {
+                    await new Promise(r => setTimeout(r, 4000));
+                    const res = await fetch(`${AGNES_API}/videos/${encodeURIComponent(id)}`);
+                    const data = await res.json().catch(() => ({}));
+                    const url = firstMediaUrl(data);
+                    const status = String(data.status || data.data?.status || data.result?.status || '').toLowerCase();
+                    if (url) {
+                        addAssetMsg('video', url, `视频生成完成：${model}`);
+                        return;
+                    }
+                    if (['failed','error','cancelled'].includes(status)) throw new Error(data.error || data.message || 'Agnes 视频任务失败。');
+                }
+                typeMsg(`视频任务已提交，但还在生成中。\n任务 ID：${id}`);
+                return;
+            }
+            chatHistory.push({ role: 'user', content: text });
+            const data = await agnesRequest('chat', {
+                model,
+                messages: chatHistory.slice(-16),
+                temperature: 0.7,
+                max_tokens: 1200
+            });
+            const answer = data?.choices?.[0]?.message?.content || data?.output_text || data?.message || 'Agnes 没有返回文本内容。';
+            chatHistory.push({ role: 'assistant', content: answer });
+            typeMsg(answer);
+        }
+
         // 回复库
         const replies = [
             { kw: ['状态','系统','怎么样'], fn: d => `所有系统运行正常。\n\nCPU使用率 ${d.cpu}，内存使用率 ${d.mem}，核心温度 ${d.temp}，处于安全范围内。\n\nAI模块全部在线，神经网络响应时间 12ms。\n\n网络连接稳定，当前带宽利用率 18%。\n\n未检测到异常活动，安全协议已启用。` },
@@ -726,15 +861,28 @@
         }
 
         // 发送
-        function send() {
+        async function send() {
             const text = chatInput.value.trim();
             if (!text) return;
             addMsg('user', text);
             chatInput.value = '';
-            setTimeout(() => typeMsg(getReply(text)), 400 + Math.random() * 400);
+            setBusy(true);
+            try {
+                await sendToAgnes(text);
+            } catch (err) {
+                typeMsg(`Agnes 调用失败：${err.message}`);
+            } finally {
+                setBusy(false);
+                chatInput.focus();
+            }
         }
         sendBtn.addEventListener('click', send);
-        chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+        chatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) send(); });
+        modelSelect.addEventListener('change', () => {
+            const kind = modelKind();
+            chatInput.placeholder = kind === 'image' ? '描述你想生成的图片...' : (kind === 'video' ? '描述你想生成的视频...' : '输入指令或问题...');
+        });
+        loadAgnesModels();
 
         // 初始消息
         addMsg('user', 'JARVIS，系统状态如何？', '22:32');
