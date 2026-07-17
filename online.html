@@ -825,9 +825,9 @@
                 model,
                 messages: chatHistory.slice(-16),
                 temperature: 0.7,
-                max_tokens: 1200
+                max_tokens: 3000
             });
-            const answer = data?.choices?.[0]?.message?.content || data?.output_text || data?.message || 'Agnes 没有返回文本内容。';
+            const answer = (data?.choices?.[0]?.message?.content || data?.output_text || data?.message || '').trim() || 'Agnes 暂时没有返回正文内容，请再试一次或切换其它模型。';
             chatHistory.push({ role: 'assistant', content: answer });
             typeMsg(answer);
         }
