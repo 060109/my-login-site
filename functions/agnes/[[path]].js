@@ -122,8 +122,9 @@ export async function onRequest(context) {
 
   const url = new URL(request.url);
   const parts = url.pathname.split('/').filter(Boolean);
-  const action = parts[2] || 'models';
-  const id = parts[3] || '';
+  const agnesIndex = parts.indexOf('agnes');
+  const action = parts[agnesIndex + 1] || 'models';
+  const id = parts[agnesIndex + 2] || '';
 
   try {
     if (request.method === 'GET' && action === 'models') return models(request, env);
